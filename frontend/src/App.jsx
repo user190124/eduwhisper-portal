@@ -7,28 +7,31 @@ import { auth } from './firebase';
 
 function App() {
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((u) => setUser(u));
+    const unsubscribe = auth.onAuthStateChanged((u) => {
+      setUser(u);
+      setLoading(false);
+    });
     return unsubscribe;
   }, []);
+
+  if (loading) return <div className="p-4">Loading...</div>;
 
   return (
     <Router>
       <div className="min-h-screen bg-gray-50 font-sans text-gray-800">
-        <header className="bg-blue-700 text-white p-4 shadow-md">
+        <header className="bg-blue-700 text-white p-4 shadow-md flex justify-between items-center">
           <h1 className="text-xl font-bold">EduWhisper Portal</h1>
-          {user && <button onClick={() => auth.signOut()} className="text-sm underline ml-4">Logout</button>}
+          {user && <button onClick={() => auth.signOut()} className="text-sm bg-blue-800 px-3 py-1 rounded hover:bg-blue-600">Logout</button>}
         </header>
 
         <main className="p-4">
           <Routes>
             <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Login />} />
             <Route path="/dashboard" element={
-              user ? (
-                [cite_start]// For demo purposes, we let user toggle views. In real app, this comes from DB role [cite: 122]
-                <DashboardRouter user={user} />
-              ) : <Navigate to="/" />
+              user ? <DashboardRouter user={user} /> : <Navigate to="/" />
             } />
           </Routes>
         </main>
@@ -38,13 +41,13 @@ function App() {
 }
 
 const DashboardRouter = ({ user }) => {
-  const [role, setRole] = useState('parent'); // Default
+  const [role, setRole] = useState('teacher');
   
   return (
     <div>
-      <div className="mb-6 flex gap-4 justify-center">
-        <button onClick={() => setRole('teacher')} className={`px-4 py-2 rounded ${role === 'teacher' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>Teacher View</button>
-        <button onClick={() => setRole('parent')} className={`px-4 py-2 rounded ${role === 'parent' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>Parent View</button>
+      <div className="mb-6 flex gap-4 justify-center bg-white p-2 rounded shadow-sm max-w-md mx-auto">
+        <button onClick={() => setRole('teacher')} className={`flex-1 px-4 py-2 rounded transition ${role === 'teacher' ? 'bg-blue-600 text-white font-bold' : 'bg-gray-100 text-gray-600'}`}>Teacher View</button>
+        <button onClick={() => setRole('parent')} className={`flex-1 px-4 py-2 rounded transition ${role === 'parent' ? 'bg-green-600 text-white font-bold' : 'bg-gray-100 text-gray-600'}`}>Parent View</button>
       </div>
       {role === 'teacher' ? <TeacherDashboard user={user} /> : <ParentDashboard user={user} />}
     </div>
