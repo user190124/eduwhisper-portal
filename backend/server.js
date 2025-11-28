@@ -11,7 +11,6 @@ app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"] }));
 app.use(express.json({ limit: '10mb' }));
 
 // ------------------ SQLite DB Setup ------------------
-// RECOMMENDATION: Delete 'eduwhisper.db' to regenerate table with new columns
 const db = new Database('./eduwhisper.db');
 
 db.prepare(`
@@ -34,13 +33,11 @@ db.prepare(`
   )
 `).run();
 
-// ------------------ Auth Middleware (Mock) ------------------
 const verifyToken = async (req, res, next) => {
   req.user = { uid: "local_teacher_123" }; 
   next();
 };
 
-// ------------------ Multer Setup ------------------
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ------------------ Routes ------------------
@@ -51,7 +48,6 @@ app.get('/', (req, res) => res.send('EduWhisper Local Backend Running!'));
 app.get('/api/activities', verifyToken, (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM activities ORDER BY timestamp DESC').all();
-
     const activities = rows.map(row => {
       let attachmentUrl = null;
       if (row.fileData && row.attachmentType) {
@@ -61,29 +57,27 @@ app.get('/api/activities', verifyToken, (req, res) => {
       const { fileData, ...rest } = row;
       return { ...rest, attachmentUrl };
     });
-
     res.json(activities);
   } catch (err) {
-    console.error("GET ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. POST: Add Single Activity (Updated with maxPoints/dueDate)
-app.post('/api/activities', verifyToken, upload.single('file'), async (req, res) => {
+// 2. POST: Create New Activity
+app.post('/api/activities', verifyToken, upload.single('file'), (req, res) => {
   try {
     let { studentName, grade, subject, type, details, score, maxPoints, dueDate } = req.body;
     
+    // Validation
+    if (!studentName || !grade || !type) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
     let fileBuffer = null;
     let mimeType = null;
-
     if (req.file) {
       fileBuffer = req.file.buffer;
       mimeType = req.file.mimetype;
-    }
-
-    if (!studentName || !grade || !type) {
-      return res.status(400).json({ message: "Missing required fields" });
     }
 
     const stmt = db.prepare(`
@@ -93,36 +87,50 @@ app.post('/api/activities', verifyToken, upload.single('file'), async (req, res)
     `);
 
     const info = stmt.run(
-      studentName, 
-      grade, 
-      subject || "General", 
-      type, 
-      details || "",
-      score || null,
-      maxPoints || null,
-      dueDate || null, 
-      req.user.uid, 
-      fileBuffer, 
-      mimeType
+      studentName, grade, subject || "General", type, details || "",
+      score || null, maxPoints || null, dueDate || null, 
+      req.user.uid, fileBuffer, mimeType
     );
 
     res.status(201).json({ id: info.lastInsertRowid, message: "Activity saved successfully" });
-
   } catch (err) {
-    console.error("SAVE ERROR:", err);
-    res.status(500).json({ message: "Failed to save activity", error: err.message });
+    res.status(500).json({ message: "Failed to save", error: err.message });
   }
 });
 
-// 3. POST: Bulk Activities (For Roll Call)
-app.post('/api/activities/bulk', verifyToken, (req, res) => {
+// 3. PUT: Update Existing Activity (NEW FEATURE)
+app.put('/api/activities/:id', verifyToken, upload.single('file'), (req, res) => {
   try {
-    const activities = req.body; // Expecting array of objects
-    if (!Array.isArray(activities) || activities.length === 0) {
-      return res.status(400).json({ message: "Invalid data for bulk upload" });
+    const { studentName, grade, subject, type, details, score, maxPoints, dueDate } = req.body;
+    const id = req.params.id;
+
+    let sql, params;
+
+    // If a new file is uploaded, update the BLOB data too
+    if (req.file) {
+       sql = `UPDATE activities SET studentName=?, grade=?, subject=?, type=?, details=?, score=?, maxPoints=?, dueDate=?, fileData=?, attachmentType=? WHERE id=?`;
+       params = [studentName, grade, subject, type, details, score, maxPoints, dueDate, req.file.buffer, req.file.mimetype, id];
+    } else {
+       // Keep existing file data
+       sql = `UPDATE activities SET studentName=?, grade=?, subject=?, type=?, details=?, score=?, maxPoints=?, dueDate=? WHERE id=?`;
+       params = [studentName, grade, subject, type, details, score, maxPoints, dueDate, id];
     }
 
-    // Transaction for performance and safety
+    const info = db.prepare(sql).run(...params);
+
+    if (info.changes === 0) return res.status(404).json({ message: "Activity not found" });
+    res.json({ success: true, message: "Activity updated successfully" });
+
+  } catch (err) {
+    console.error("UPDATE ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. POST: Bulk Activities
+app.post('/api/activities/bulk', verifyToken, (req, res) => {
+  try {
+    const activities = req.body;
     const insertMany = db.transaction((items) => {
       const stmt = db.prepare(`
         INSERT INTO activities (studentName, grade, subject, type, details, teacherId)
@@ -132,31 +140,25 @@ app.post('/api/activities/bulk', verifyToken, (req, res) => {
         stmt.run(item.studentName, item.grade, "General", "Attendance", item.details, req.user.uid);
       }
     });
-
     insertMany(activities);
     res.json({ success: true, message: `Logged ${activities.length} records.` });
-
   } catch (err) {
-    console.error("BULK ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 4. DELETE: Remove Activity
+// 5. DELETE: Remove Activity
 app.delete('/api/activities/:id', verifyToken, (req, res) => {
   try {
     const stmt = db.prepare('DELETE FROM activities WHERE id = ?');
     const info = stmt.run(req.params.id);
-
     if (info.changes === 0) return res.status(404).json({ message: "Activity not found" });
-
     res.json({ success: true, message: "Deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ------------------ Export Server ------------------
 if (require.main === module) {
   const PORT = process.env.PORT || 5001;
   app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

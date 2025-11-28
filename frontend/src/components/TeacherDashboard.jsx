@@ -46,17 +46,24 @@ const Icons = {
 };
 
 export default function TeacherDashboard({ user }) {
-  const [activeTab, setActiveTab] = useState("activity"); // 'activity', 'file', 'rollcall'
+  const [activeTab, setActiveTab] = useState("activity"); 
   const [status, setStatus] = useState("");
   const [history, setHistory] = useState([]);
   
-  // Single Entry Form State
+  // NEW: Search & Filter State
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("All");
+
+  // NEW: Edit Mode State
+  const [isEditing, setIsEditing] = useState(false);
+  const [editId, setEditId] = useState(null);
+
+  // Form State
   const [activityForm, setActivityForm] = useState({
     studentId: "", studentName: "", grade: "", subject: "", type: "Attendance", details: "", score: "", maxPoints: "", dueDate: "", file: null,
   });
 
-  // Roll Call State
-  const [attendanceMap, setAttendanceMap] = useState({}); // { 1: true, 2: false }
+  const [attendanceMap, setAttendanceMap] = useState({}); 
 
   useEffect(() => {
     fetchHistory();
@@ -64,7 +71,6 @@ export default function TeacherDashboard({ user }) {
 
   const fetchHistory = async () => {
     try {
-        // Assuming mock user allows read
         const token = await user?.getIdToken() || "mock_token";
         const res = await axios.get("http://localhost:5001/api/activities", {
              headers: { Authorization: `Bearer ${token}` }
@@ -73,6 +79,47 @@ export default function TeacherDashboard({ user }) {
     } catch (err) {
         console.error("Fetch history failed", err);
     }
+  };
+
+  // --- Handlers ---
+
+  const handleStudentSelect = (e) => {
+      const sId = parseInt(e.target.value);
+      const student = STUDENTS.find(s => s.id === sId);
+      if(student) {
+          setActivityForm({ ...activityForm, studentId: sId, studentName: student.name, grade: student.grade });
+      }
+  };
+
+  // Feature: Populate Form for Editing
+  const handleEdit = (log) => {
+      // Find student ID based on name to set the dropdown correctly
+      const student = STUDENTS.find(s => s.name === log.studentName);
+      setActivityForm({
+          studentId: student ? student.id : "",
+          studentName: log.studentName,
+          grade: log.grade,
+          subject: log.subject || "",
+          type: log.type,
+          details: log.details,
+          score: log.score || "",
+          maxPoints: log.maxPoints || "",
+          dueDate: log.dueDate || "",
+          file: null // We don't preload the file object, user must re-upload if they want to change it
+      });
+      setIsEditing(true);
+      setEditId(log.id);
+      setActiveTab("activity"); // Switch to form tab
+      window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to top
+  };
+
+  // Feature: Cancel Edit
+  const handleCancelEdit = () => {
+      setIsEditing(false);
+      setEditId(null);
+      setActivityForm({
+        studentId: "", studentName: "", grade: "", subject: "", type: "Attendance", details: "", score: "", maxPoints: "", dueDate: "", file: null,
+      });
   };
 
   const deleteLog = async (id) => {
@@ -88,18 +135,10 @@ export default function TeacherDashboard({ user }) {
       }
   };
 
-  // Handle Student Selection from Dropdown
-  const handleStudentSelect = (e) => {
-      const sId = parseInt(e.target.value);
-      const student = STUDENTS.find(s => s.id === sId);
-      if(student) {
-          setActivityForm({ ...activityForm, studentId: sId, studentName: student.name, grade: student.grade });
-      }
-  };
-
+  // Create OR Update Activity
   const submitActivity = async (e) => {
     e.preventDefault();
-    setStatus("Submitting...");
+    setStatus(isEditing ? "Updating..." : "Submitting...");
     
     try {
         const token = await user?.getIdToken() || "mock_token";
@@ -108,19 +147,29 @@ export default function TeacherDashboard({ user }) {
         formData.append("grade", activityForm.grade || "N/A");
         formData.append("subject", activityForm.subject);
         formData.append("type", activityForm.type);
-        formData.append("details", activityForm.details || "File Uploaded");
+        formData.append("details", activityForm.details || "");
   
         if (activityForm.score) formData.append("score", activityForm.score);
         if (activityForm.maxPoints) formData.append("maxPoints", activityForm.maxPoints);
         if (activityForm.dueDate) formData.append("dueDate", activityForm.dueDate);
         if (activityForm.file) formData.append("file", activityForm.file);
   
-        await axios.post("http://localhost:5001/api/activities", formData, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        if (isEditing) {
+            // PUT Request
+            await axios.put(`http://localhost:5001/api/activities/${editId}`, formData, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            setStatus("Success: Entry Updated");
+            handleCancelEdit(); // Reset mode
+        } else {
+            // POST Request
+            await axios.post("http://localhost:5001/api/activities", formData, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            setStatus("Success: Entry Logged");
+            setActivityForm({ ...activityForm, details: "", score: "", maxPoints: "", dueDate: "", file: null });
+        }
         
-        setStatus("Success: Entry Logged");
-        setActivityForm({ ...activityForm, details: "", score: "", maxPoints: "", dueDate: "", file: null });
         fetchHistory();
         setTimeout(() => setStatus(""), 3000);
 
@@ -152,6 +201,13 @@ export default function TeacherDashboard({ user }) {
     }
   };
 
+  // --- Filter Logic ---
+  const filteredHistory = history.filter(item => {
+      const matchesSearch = item.studentName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = filterType === "All" || item.type === filterType;
+      return matchesSearch && matchesType;
+  });
+
   return (
     <div className="relative min-h-screen font-sans bg-gray-100 overflow-x-hidden selection:bg-indigo-200">
       
@@ -159,47 +215,33 @@ export default function TeacherDashboard({ user }) {
       <div className="fixed inset-0 z-0">
           <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${backgroundUrl})` }}></div>
           <div className="absolute inset-0 bg-gradient-to-br from-slate-900/90 via-slate-800/80 to-indigo-900/60 mix-blend-multiply"></div>
-          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
       </div>
 
       <div className="relative z-10 p-4 md:p-8">
         
-        {/* HEADER */}
         <header className="max-w-7xl mx-auto mb-10 flex flex-col md:flex-row justify-between items-end pb-6 border-b border-white/10">
           <div className="flex items-center gap-5">
-              <div className="relative">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-pink-600 to-purple-600 rounded-full blur opacity-75 animate-pulse"></div>
-                  <div className="relative bg-slate-900 p-3 rounded-full border border-white/10">
-                     <span className="text-2xl">🎓</span>
-                  </div>
+              <div className="relative bg-slate-900 p-3 rounded-full border border-white/10">
+                  <span className="text-2xl">🎓</span>
               </div>
               <div>
                   <h1 className="text-3xl font-black text-white tracking-tight drop-shadow-sm">
                     Edu<span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">Whisper</span>
                   </h1>
-                  <p className="text-blue-200 text-sm font-medium tracking-wide">Instructor Portal v2.1</p>
+                  <p className="text-blue-200 text-sm font-medium tracking-wide">Instructor Portal v2.2</p>
               </div>
-          </div>
-          
-          <div className="flex gap-4 mt-4 md:mt-0">
-             <div className="bg-white/10 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center shadow-lg">
-                <Icons.Calendar /> {new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}
-             </div>
           </div>
         </header>
 
-        {/* STATS GRID */}
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
            <StatCard title="Total Students" value={STUDENTS.length} subtext="Active Roster" icon={Icons.Student} color="bg-blue-500" />
-           <StatCard title="Avg Attendance" value="94%" subtext="↑ 2% vs last month" icon={Icons.Trending} color="bg-green-500" />
-           <StatCard title="Recent Logs" value={history.length} subtext="Activities tracked" icon={Icons.Task} color="bg-orange-500" />
+           <StatCard title="Total Logs" value={history.length} subtext="All time entries" icon={Icons.Trending} color="bg-green-500" />
+           <StatCard title="Assignments" value={history.filter(h => h.type === 'Task').length} subtext="Pending review" icon={Icons.Task} color="bg-orange-500" />
            <StatCard title="Class Hours" value="24h" subtext="Completed this week" icon={Icons.Clock} color="bg-purple-500" />
         </div>
 
-        {/* MAIN WORKSPACE GRID */}
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* LEFT: ACTION FORM (Span 8) */}
           <div className="lg:col-span-8">
             <div className="bg-white/80 backdrop-blur-xl p-1 rounded-3xl shadow-2xl border border-white/40">
                 
@@ -215,14 +257,21 @@ export default function TeacherDashboard({ user }) {
                                 : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
-                            {tab === 'activity' ? 'Individual' : tab === 'rollcall' ? 'Roll Call' : 'Resources'}
+                            {tab === 'activity' ? (isEditing ? '✏️ Editing Mode' : 'Individual') : tab === 'rollcall' ? 'Roll Call' : 'Resources'}
                         </button>
                     ))}
                 </div>
 
-                {/* --- TAB: INDIVIDUAL --- */}
+                {/* --- TAB: INDIVIDUAL (CREATE / EDIT) --- */}
                 {activeTab === 'activity' && (
                     <div className="px-8 pb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {isEditing && (
+                            <div className="mb-4 bg-yellow-100 text-yellow-800 p-3 rounded-xl flex justify-between items-center">
+                                <span className="font-bold text-sm">⚠️ You are editing an existing entry.</span>
+                                <button onClick={handleCancelEdit} className="text-xs underline font-bold">Cancel Edit</button>
+                            </div>
+                        )}
+
                         <form onSubmit={submitActivity} className="space-y-5">
                             <div className="grid grid-cols-2 gap-5">
                                 <div className="group">
@@ -270,7 +319,6 @@ export default function TeacherDashboard({ user }) {
                                 ))}
                             </div>
 
-                            {/* CONDITIONAL TASK FIELDS */}
                             {activityForm.type === 'Task' && (
                                 <div className="grid grid-cols-2 gap-5 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
                                     <div>
@@ -291,8 +339,8 @@ export default function TeacherDashboard({ user }) {
                                 onChange={e => setActivityForm({...activityForm, details: e.target.value})}
                             ></textarea>
 
-                            <button className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xl transition-all">
-                                Log Entry
+                            <button className={`w-full py-4 rounded-xl text-white font-bold shadow-xl transition-all ${isEditing ? 'bg-orange-500 hover:bg-orange-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                                {isEditing ? "Update Entry" : "Log Entry"}
                             </button>
                         </form>
                     </div>
@@ -308,10 +356,7 @@ export default function TeacherDashboard({ user }) {
                                         <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center font-bold text-gray-500 text-xs">
                                             {student.name.charAt(0)}
                                         </div>
-                                        <div>
-                                            <p className="font-bold text-gray-800 text-sm">{student.name}</p>
-                                            <p className="text-xs text-gray-400">{student.grade}</p>
-                                        </div>
+                                        <p className="font-bold text-gray-800 text-sm">{student.name}</p>
                                     </div>
                                     <button 
                                         onClick={() => setAttendanceMap(prev => ({ ...prev, [student.id]: !prev[student.id] }))}
@@ -350,21 +395,45 @@ export default function TeacherDashboard({ user }) {
                 {status && <div className="text-center p-2 font-bold text-indigo-600">{status}</div>}
             </div>
 
-            {/* --- RECENT HISTORY & DELETE --- */}
+            {/* --- RECENT HISTORY W/ SEARCH & EDIT --- */}
             <div className="mt-8 bg-white/80 backdrop-blur-xl p-6 rounded-3xl shadow-xl border border-white/40">
-                <h3 className="font-bold text-gray-800 mb-4 text-lg">📝 Recent Logs</h3>
-                <div className="overflow-x-auto">
+                <div className="flex flex-col md:flex-row justify-between items-center mb-6">
+                    <h3 className="font-bold text-gray-800 text-lg">📝 Activity Log</h3>
+                    
+                    {/* NEW: SEARCH & FILTER BAR */}
+                    <div className="flex gap-2 mt-4 md:mt-0 w-full md:w-auto">
+                        <input 
+                            type="text" 
+                            placeholder="Search Student..." 
+                            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <select 
+                            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"
+                            value={filterType}
+                            onChange={(e) => setFilterType(e.target.value)}
+                        >
+                            <option value="All">All Types</option>
+                            <option value="Attendance">Attendance</option>
+                            <option value="Task">Task</option>
+                            <option value="Behavior">Behavior</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                     <table className="w-full text-left border-collapse">
-                        <thead>
+                        <thead className="sticky top-0 bg-white/90 backdrop-blur-sm z-10">
                             <tr className="text-xs font-bold text-gray-400 uppercase border-b border-gray-200">
                                 <th className="p-3">Student</th>
                                 <th className="p-3">Type</th>
                                 <th className="p-3">Details</th>
-                                <th className="p-3 text-right">Action</th>
+                                <th className="p-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="text-sm">
-                            {history.slice(0, 5).map(log => (
+                            {filteredHistory.map(log => (
                                 <tr key={log.id} className="border-b border-gray-100 last:border-0 hover:bg-white/50">
                                     <td className="p-3 font-bold text-gray-700">{log.studentName}</td>
                                     <td className="p-3">
@@ -378,19 +447,34 @@ export default function TeacherDashboard({ user }) {
                                         {log.maxPoints && <div className="text-xs text-indigo-500">Max: {log.maxPoints} | Due: {log.dueDate}</div>}
                                     </td>
                                     <td className="p-3 text-right">
-                                        <button onClick={() => deleteLog(log.id)} className="text-red-400 hover:text-red-600 font-bold px-2">Delete</button>
+                                        {/* EDIT BUTTON */}
+                                        <button 
+                                            onClick={() => handleEdit(log)} 
+                                            className="text-indigo-400 hover:text-indigo-600 font-bold px-2 mr-2"
+                                            title="Edit"
+                                        >
+                                            ✏️
+                                        </button>
+                                        {/* DELETE BUTTON */}
+                                        <button 
+                                            onClick={() => deleteLog(log.id)} 
+                                            className="text-red-400 hover:text-red-600 font-bold px-2"
+                                            title="Delete"
+                                        >
+                                            🗑️
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                    {history.length === 0 && <p className="text-center text-gray-400 py-4">No logs found.</p>}
+                    {filteredHistory.length === 0 && <p className="text-center text-gray-400 py-4">No logs match your filter.</p>}
                 </div>
             </div>
 
           </div>
 
-          {/* RIGHT: WIDGETS (Span 4) */}
+          {/* RIGHT: WIDGETS */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-6 border border-white/50 shadow-xl">
                 <h3 className="font-bold text-gray-800 mb-4">Class Schedule</h3>
@@ -401,7 +485,7 @@ export default function TeacherDashboard({ user }) {
             </div>
              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-3xl p-6 shadow-xl">
                 <h3 className="font-bold mb-2">📢 System Alerts</h3>
-                <p className="text-sm text-gray-300">Grade submissions for Term 2 are closing in 48 hours. Please review pending tasks.</p>
+                <p className="text-sm text-gray-300">Grade submissions for Term 2 are closing in 48 hours.</p>
             </div>
           </div>
 
