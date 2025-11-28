@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
+// NEW: Import Recharts components
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // ----------------------------------------------------------------------
 // CONFIGURATION & MOCK DATA
@@ -13,6 +15,8 @@ const STUDENTS = [
   { id: 4, name: 'Diana Prince', grade: '11th Grade' },
   { id: 5, name: 'Evan Wright', grade: '10th Grade' },
 ];
+
+const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#00C49F'];
 
 // ----------------------------------------------------------------------
 // COMPONENTS
@@ -41,8 +45,8 @@ const Icons = {
   Task: (s=6) => <svg className={`w-${s} h-${s}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>,
   Clock: (s=6) => <svg className={`w-${s} h-${s}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   Trending: (s=6) => <svg className={`w-${s} h-${s}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>,
+  Upload: (s=6) => <svg className={`w-${s} h-${s}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>,
   Calendar: () => <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
-  Upload: (s=6) => <svg className={`w-${s} h-${s}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
 };
 
 export default function TeacherDashboard({ user }) {
@@ -50,11 +54,11 @@ export default function TeacherDashboard({ user }) {
   const [status, setStatus] = useState("");
   const [history, setHistory] = useState([]);
   
-  // NEW: Search & Filter State
+  // Search & Filter State
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("All");
 
-  // NEW: Edit Mode State
+  // Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
   const [editId, setEditId] = useState(null);
 
@@ -81,6 +85,24 @@ export default function TeacherDashboard({ user }) {
     }
   };
 
+  // --- ANALYTICS DATA PROCESSING (Memoized for performance) ---
+  const chartDataPie = useMemo(() => {
+    const counts = history.reduce((acc, curr) => {
+        acc[curr.type] = (acc[curr.type] || 0) + 1;
+        return acc;
+    }, {});
+    return Object.keys(counts).map(key => ({ name: key, value: counts[key] }));
+  }, [history]);
+
+  const chartDataBar = useMemo(() => {
+    const counts = history.reduce((acc, curr) => {
+        acc[curr.studentName] = (acc[curr.studentName] || 0) + 1;
+        return acc;
+    }, {});
+    // Top 5 most active students
+    return Object.keys(counts).map(key => ({ name: key.split(' ')[0], logs: counts[key] })).slice(0, 5);
+  }, [history]);
+
   // --- Handlers ---
 
   const handleStudentSelect = (e) => {
@@ -91,9 +113,7 @@ export default function TeacherDashboard({ user }) {
       }
   };
 
-  // Feature: Populate Form for Editing
   const handleEdit = (log) => {
-      // Find student ID based on name to set the dropdown correctly
       const student = STUDENTS.find(s => s.name === log.studentName);
       setActivityForm({
           studentId: student ? student.id : "",
@@ -105,15 +125,14 @@ export default function TeacherDashboard({ user }) {
           score: log.score || "",
           maxPoints: log.maxPoints || "",
           dueDate: log.dueDate || "",
-          file: null // We don't preload the file object, user must re-upload if they want to change it
+          file: null 
       });
       setIsEditing(true);
       setEditId(log.id);
-      setActiveTab("activity"); // Switch to form tab
-      window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to top
+      setActiveTab("activity"); 
+      window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Feature: Cancel Edit
   const handleCancelEdit = () => {
       setIsEditing(false);
       setEditId(null);
@@ -135,7 +154,6 @@ export default function TeacherDashboard({ user }) {
       }
   };
 
-  // Create OR Update Activity
   const submitActivity = async (e) => {
     e.preventDefault();
     setStatus(isEditing ? "Updating..." : "Submitting...");
@@ -155,14 +173,12 @@ export default function TeacherDashboard({ user }) {
         if (activityForm.file) formData.append("file", activityForm.file);
   
         if (isEditing) {
-            // PUT Request
             await axios.put(`http://localhost:5001/api/activities/${editId}`, formData, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             setStatus("Success: Entry Updated");
-            handleCancelEdit(); // Reset mode
+            handleCancelEdit(); 
         } else {
-            // POST Request
             await axios.post("http://localhost:5001/api/activities", formData, {
                 headers: { Authorization: `Bearer ${token}` },
             });
@@ -201,7 +217,6 @@ export default function TeacherDashboard({ user }) {
     }
   };
 
-  // --- Filter Logic ---
   const filteredHistory = history.filter(item => {
       const matchesSearch = item.studentName.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = filterType === "All" || item.type === filterType;
@@ -228,11 +243,12 @@ export default function TeacherDashboard({ user }) {
                   <h1 className="text-3xl font-black text-white tracking-tight drop-shadow-sm">
                     Edu<span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">Whisper</span>
                   </h1>
-                  <p className="text-blue-200 text-sm font-medium tracking-wide">Instructor Portal v2.2</p>
+                  <p className="text-blue-200 text-sm font-medium tracking-wide">Instructor Portal v3.0 (Analytics)</p>
               </div>
           </div>
         </header>
 
+        {/* STATS GRID */}
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
            <StatCard title="Total Students" value={STUDENTS.length} subtext="Active Roster" icon={Icons.Student} color="bg-blue-500" />
            <StatCard title="Total Logs" value={history.length} subtext="All time entries" icon={Icons.Trending} color="bg-green-500" />
@@ -394,13 +410,54 @@ export default function TeacherDashboard({ user }) {
 
                 {status && <div className="text-center p-2 font-bold text-indigo-600">{status}</div>}
             </div>
+            
+            {/* NEW: VISUAL ANALYTICS SECTION */}
+            <div className="mt-8 bg-white/80 backdrop-blur-xl p-6 rounded-3xl shadow-xl border border-white/40">
+                <h3 className="font-bold text-gray-800 mb-6 text-lg">📊 Activity Analytics</h3>
+                {history.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-[300px]">
+                        {/* CHART 1: PIE - ACTIVITY TYPE */}
+                        <div className="bg-white/50 rounded-2xl p-4 flex flex-col items-center">
+                            <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Logs by Type</h4>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie data={chartDataPie} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                                        {chartDataPie.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip />
+                                    <Legend />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
 
-            {/* --- RECENT HISTORY W/ SEARCH & EDIT --- */}
+                        {/* CHART 2: BAR - ENGAGEMENT */}
+                        <div className="bg-white/50 rounded-2xl p-4 flex flex-col items-center">
+                            <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">Most Active Students</h4>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartDataBar}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ccc" />
+                                    <XAxis dataKey="name" fontSize={12} />
+                                    <YAxis fontSize={12} />
+                                    <Tooltip cursor={{fill: 'transparent'}} />
+                                    <Bar dataKey="logs" fill="#8884d8" radius={[10, 10, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="h-[200px] flex items-center justify-center text-gray-400 font-bold bg-white/50 rounded-2xl">
+                        Log some data to see charts!
+                    </div>
+                )}
+            </div>
+
+            {/* RECENT HISTORY W/ SEARCH & EDIT */}
             <div className="mt-8 bg-white/80 backdrop-blur-xl p-6 rounded-3xl shadow-xl border border-white/40">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-6">
                     <h3 className="font-bold text-gray-800 text-lg">📝 Activity Log</h3>
                     
-                    {/* NEW: SEARCH & FILTER BAR */}
                     <div className="flex gap-2 mt-4 md:mt-0 w-full md:w-auto">
                         <input 
                             type="text" 
@@ -447,7 +504,6 @@ export default function TeacherDashboard({ user }) {
                                         {log.maxPoints && <div className="text-xs text-indigo-500">Max: {log.maxPoints} | Due: {log.dueDate}</div>}
                                     </td>
                                     <td className="p-3 text-right">
-                                        {/* EDIT BUTTON */}
                                         <button 
                                             onClick={() => handleEdit(log)} 
                                             className="text-indigo-400 hover:text-indigo-600 font-bold px-2 mr-2"
@@ -455,7 +511,6 @@ export default function TeacherDashboard({ user }) {
                                         >
                                             ✏️
                                         </button>
-                                        {/* DELETE BUTTON */}
                                         <button 
                                             onClick={() => deleteLog(log.id)} 
                                             className="text-red-400 hover:text-red-600 font-bold px-2"
