@@ -1,261 +1,158 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import axios from 'axios';
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-
-// --- FIREBASE CONFIGURATION ---
-// TODO: Replace with your actual values from Firebase Console
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const storage = getStorage(app);
-
-// --- API URL CONFIGURATION ---
-const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5001/api/activities' 
-  : '/api/activities';
+import { auth } from './firebase';
+import Login from './components/Login';
+import TeacherDashboard from './components/TeacherDashboard';
+import ParentDashboard from './components/ParentDashboard';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // --- COMPONENTS ---
 
-const Login = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+const LoadingScreen = () => (
+  <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+    <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+    <p className="mt-4 text-gray-500 font-medium animate-pulse">Initializing EduWhisper...</p>
+  </div>
+);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      setError("Login failed. Check credentials.");
-    }
-  };
-
-  return (
-    <div className="max-w-md mx-auto mt-20 p-6 bg-white rounded shadow-lg">
-      <h2 className="text-2xl font-bold mb-6 text-center text-blue-800">EduWhisper Portal</h2>
-      {error && <p className="text-red-500 mb-4 text-sm text-center">{error}</p>}
-      <form onSubmit={handleLogin} className="flex flex-col gap-4">
-        <input 
-          type="email" placeholder="Email" value={email} 
-          onChange={e=>setEmail(e.target.value)} 
-          className="border border-gray-300 p-3 rounded" required 
-        />
-        <input 
-          type="password" placeholder="Password" value={password} 
-          onChange={e=>setPassword(e.target.value)} 
-          className="border border-gray-300 p-3 rounded" required 
-        />
-        <button type="submit" className="bg-blue-600 text-white p-3 rounded hover:bg-blue-700">Sign In</button>
-      </form>
+const Navbar = ({ user }) => (
+  <nav className="sticky top-0 z-50 backdrop-blur-md bg-white/70 border-b border-white/20 shadow-sm px-6 py-4 flex justify-between items-center transition-all">
+    <div className="flex items-center gap-2">
+      <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg">
+        E
+      </div>
+      <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-purple-700">
+        EduWhisper
+      </h1>
     </div>
-  );
-};
-
-const TeacherDashboard = ({ user }) => {
-  const [formData, setFormData] = useState({ studentName: '', type: 'Attendance', details: '' });
-  const [file, setFile] = useState(null);
-  const [status, setStatus] = useState('');
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-
-  useEffect(() => {
-    const handleStatus = () => setIsOnline(navigator.onLine);
-    window.addEventListener('online', handleStatus);
-    window.addEventListener('offline', handleStatus);
-    return () => {
-      window.removeEventListener('online', handleStatus);
-      window.removeEventListener('offline', handleStatus);
-    };
-  }, []);
-
-  useEffect(() => {
-    const syncOfflineData = async () => {
-      const offlineData = JSON.parse(localStorage.getItem('offlineData') || '[]');
-      if (offlineData.length > 0 && isOnline) {
-        setStatus('Syncing offline data...');
-        try {
-          const token = await user.getIdToken();
-          for (const data of offlineData) {
-            await axios.post(API_URL, data, { headers: { Authorization: `Bearer ${token}` } });
-          }
-          localStorage.removeItem('offlineData');
-          setStatus('Offline data synced!');
-        } catch (err) {
-          setStatus('Sync failed. Will retry later.');
-        }
-      }
-    };
-    if (isOnline) syncOfflineData();
-  }, [user, isOnline]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setStatus('Processing...');
     
-    let attachmentUrl = '';
-    let attachmentType = '';
+    {user && (
+      <button
+        onClick={() => auth.signOut()}
+        className="group flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-600 hover:text-red-500 transition-colors bg-white/50 hover:bg-red-50 rounded-full border border-gray-200"
+      >
+        <span>Logout</span>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+        </svg>
+      </button>
+    )}
+  </nav>
+);
 
-    try {
-      if (file && isOnline) {
-        setStatus('Uploading file...');
-        const fileRef = ref(storage, `uploads/${Date.now()}_${file.name}`);
-        const snapshot = await uploadBytes(fileRef, file);
-        attachmentUrl = await getDownloadURL(snapshot.ref);
-        attachmentType = file.type.startsWith('image/') ? 'image' : 'document';
-      } else if (file && !isOnline) {
-        setStatus('Error: Cannot upload files while offline.');
-        return;
-      }
-
-      const payload = { ...formData, attachmentUrl, attachmentType, date: new Date() };
-      const token = await user.getIdToken();
-      
-      await axios.post(API_URL, payload, { headers: { Authorization: `Bearer ${token}` } });
-
-      setStatus('Activity logged successfully!');
-      setFormData({ studentName: '', type: 'Attendance', details: '' });
-      setFile(null);
-
-    } catch (error) {
-      if (!isOnline) {
-        const payload = { ...formData, attachmentUrl: '', attachmentType: '', date: new Date() };
-        const currentOffline = JSON.parse(localStorage.getItem('offlineData') || '[]');
-        localStorage.setItem('offlineData', JSON.stringify([...currentOffline, payload]));
-        setStatus('Network error. Text data saved offline.');
-      } else {
-        setStatus('Error submitting data.');
-      }
-    }
-  };
+const RoleSwitcher = ({ role, setRole }) => {
+  const roles = [
+    { id: 'teacher', label: 'Teacher View', icon: '👨‍🏫' },
+    { id: 'parent', label: 'Parent View', icon: '👨‍👩‍👧' }
+  ];
 
   return (
-    <div className="max-w-xl mx-auto p-6 bg-white shadow-md rounded-lg">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold">Teacher Activity Log</h2>
-        <span className={`px-2 py-1 text-xs rounded ${isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-          {isOnline ? "Online" : "Offline"}
-        </span>
-      </div>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input className="border p-2 rounded" placeholder="Student Name" value={formData.studentName} onChange={e => setFormData({...formData, studentName: e.target.value})} required />
-        <select className="border p-2 rounded" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
-          <option>Attendance</option>
-          <option>Task</option>
-          <option>Note</option>
-        </select>
-        <textarea className="border p-2 rounded" placeholder="Details..." value={formData.details} onChange={e => setFormData({...formData, details: e.target.value})} required />
-        <input type="file" onChange={e => setFile(e.target.files[0])} disabled={!isOnline} className="block w-full text-sm text-gray-500" />
-        <button className="bg-blue-600 text-white p-2 rounded">Log Activity</button>
-      </form>
-      {status && <p className="mt-2 text-sm text-blue-600">{status}</p>}
-    </div>
-  );
-};
-
-const ParentDashboard = ({ user }) => {
-  const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchActivities = async () => {
-      try {
-        const token = await user.getIdToken();
-        const res = await axios.get(API_URL, { headers: { Authorization: `Bearer ${token}` } });
-        setActivities(res.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchActivities();
-  }, [user]);
-
-  if (loading) return <div className="text-center p-8">Loading updates...</div>;
-
-  return (
-    <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">Student Activity Feed</h2>
-      <div className="space-y-4">
-        {activities.map(act => (
-          <div key={act._id} className="bg-white border p-4 rounded shadow-sm">
-            <div className="flex justify-between font-bold">
-              <span>{act.studentName}</span>
-              <span className="text-xs text-gray-500">{new Date(act.timestamp).toLocaleDateString()}</span>
-            </div>
-            <div className="text-xs text-white bg-blue-500 inline-block px-2 rounded mb-2">{act.type}</div>
-            <p>{act.details}</p>
-            {act.attachmentUrl && (
-              <a href={act.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-sm underline mt-2 block">
-                View Attachment
-              </a>
+    <div className="flex justify-center mb-8">
+      <div className="bg-gray-200/80 p-1 rounded-full flex relative shadow-inner">
+        {roles.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => setRole(r.id)}
+            className={`relative z-10 px-6 py-2 rounded-full text-sm font-bold transition-colors duration-200 flex items-center gap-2 ${
+              role === r.id ? 'text-blue-700' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <span className="text-lg">{r.icon}</span>
+            {r.label}
+            {role === r.id && (
+              <motion.div
+                layoutId="activePill"
+                className="absolute inset-0 bg-white shadow-md rounded-full -z-10"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
             )}
-          </div>
+          </button>
         ))}
-        {activities.length === 0 && <p className="text-center text-gray-500">No updates found.</p>}
       </div>
     </div>
   );
 };
 
-// --- MAIN APP COMPONENT ---
+// --- MAIN DASHBOARD ROUTER ---
+
+const DashboardRouter = ({ user }) => {
+  const [role, setRole] = useState('parent'); 
+
+  return (
+    <div className="max-w-7xl mx-auto">
+      {/* Introduction Text */}
+      <div className="text-center mb-8 mt-4">
+        <h2 className="text-2xl font-bold text-gray-800">Welcome Back</h2>
+        <p className="text-gray-500">Our Trusted User</p>
+      </div>
+
+      <RoleSwitcher role={role} setRole={setRole} />
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={role}
+          initial={{ opacity: 0, x: role === 'teacher' ? -20 : 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: role === 'teacher' ? 20 : -20 }}
+          transition={{ duration: 0.3 }}
+        >
+          {role === 'teacher' ? (
+            <TeacherDashboard user={user} />
+          ) : (
+            <ParentDashboard user={user} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// --- APP ROOT ---
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = auth.onAuthStateChanged((u) => {
       setUser(u);
       setLoading(false);
     });
     return unsubscribe;
   }, []);
 
-  if (loading) return <div className="flex justify-center items-center h-screen">Loading...</div>;
+  if (loading) return <LoadingScreen />;
 
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50 text-gray-800">
-        <header className="bg-blue-700 text-white p-4 flex justify-between items-center">
-          <h1 className="text-xl font-bold">EduWhisper Portal</h1>
-          {user && <button onClick={() => signOut(auth)} className="bg-blue-800 px-3 py-1 rounded text-sm">Logout</button>}
-        </header>
+      <div className="min-h-screen bg-gray-50 font-sans text-gray-800 relative overflow-hidden">
+        
+        {/* Background Blobs (Atmosphere) */}
+        <div className="fixed top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
+          <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
+          <div className="absolute top-[-10%] right-[-10%] w-96 h-96 bg-blue-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
+          <div className="absolute bottom-[-20%] left-[20%] w-96 h-96 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-4000"></div>
+        </div>
 
-        <main className="p-4">
+        <Navbar user={user} />
+
+        <main className="p-4 md:p-8">
           <Routes>
-            <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Login />} />
-            <Route path="/dashboard" element={
-              user ? <DashboardRouter user={user} /> : <Navigate to="/" />
-            } />
+            <Route
+              path="/"
+              element={user ? <Navigate to="/dashboard" /> : <Login />}
+            />
+            <Route
+              path="/dashboard"
+              element={
+                user ? <DashboardRouter user={user} /> : <Navigate to="/" />
+              }
+            />
           </Routes>
         </main>
       </div>
     </Router>
   );
 }
-
-const DashboardRouter = ({ user }) => {
-  const [role, setRole] = useState('teacher');
-  return (
-    <div>
-      <div className="mb-6 flex gap-4 justify-center">
-        <button onClick={() => setRole('teacher')} className={`px-4 py-2 rounded ${role === 'teacher' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>Teacher View</button>
-        <button onClick={() => setRole('parent')} className={`px-4 py-2 rounded ${role === 'parent' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>Parent View</button>
-      </div>
-      {role === 'teacher' ? <TeacherDashboard user={user} /> : <ParentDashboard user={user} />}
-    </div>
-  );
-};
 
 export default App;
