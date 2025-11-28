@@ -8,10 +8,10 @@ const app = express();
 
 // ------------------ Middleware ------------------
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"] }));
-app.use(express.json({ limit: '10mb' })); // Increased limit for Base64 signatures
+app.use(express.json({ limit: '10mb' }));
 
 // ------------------ SQLite DB Setup ------------------
-// RECOMMENDATION: If you get errors, delete 'eduwhisper.db' file to regenerate the table
+// RECOMMENDATION: Delete 'eduwhisper.db' to regenerate table with new columns
 const db = new Database('./eduwhisper.db');
 
 db.prepare(`
@@ -22,7 +22,9 @@ db.prepare(`
     subject TEXT,
     type TEXT,
     details TEXT,
-    score INTEGER,                     
+    score INTEGER,
+    maxPoints INTEGER,                 
+    dueDate TEXT,                      
     teacherId TEXT,
     fileData BLOB,         
     attachmentType TEXT,
@@ -34,7 +36,6 @@ db.prepare(`
 
 // ------------------ Auth Middleware (Mock) ------------------
 const verifyToken = async (req, res, next) => {
-  // Mock User for local development
   req.user = { uid: "local_teacher_123" }; 
   next();
 };
@@ -46,21 +47,17 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.get('/', (req, res) => res.send('EduWhisper Local Backend Running!'));
 
-// ------------------ Get All Activities ------------------
+// 1. GET: Fetch all activities
 app.get('/api/activities', verifyToken, (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM activities ORDER BY timestamp DESC').all();
 
     const activities = rows.map(row => {
       let attachmentUrl = null;
-      
-      // Convert BLOB to Data URI for frontend to display images/pdfs
       if (row.fileData && row.attachmentType) {
         const base64 = row.fileData.toString('base64');
         attachmentUrl = `data:${row.attachmentType};base64,${base64}`;
       }
-
-      // Remove raw binary data from response to keep it light
       const { fileData, ...rest } = row;
       return { ...rest, attachmentUrl };
     });
@@ -72,11 +69,10 @@ app.get('/api/activities', verifyToken, (req, res) => {
   }
 });
 
-// ------------------ Add Activity (Teacher) ------------------
+// 2. POST: Add Single Activity (Updated with maxPoints/dueDate)
 app.post('/api/activities', verifyToken, upload.single('file'), async (req, res) => {
   try {
-    // Multer puts form-data text fields in req.body
-    let { studentName, grade, subject, type, details, score } = req.body;
+    let { studentName, grade, subject, type, details, score, maxPoints, dueDate } = req.body;
     
     let fileBuffer = null;
     let mimeType = null;
@@ -86,32 +82,25 @@ app.post('/api/activities', verifyToken, upload.single('file'), async (req, res)
       mimeType = req.file.mimetype;
     }
 
-    // --- DEBUGGING LOG ---
-    // This will print to your VS Code terminal so you know what is being received
-    console.log("Received Data:", { studentName, grade, type, subject, score });
-
-    // Validation: Ensure required fields exist
     if (!studentName || !grade || !type) {
-      console.error("Missing Fields:", { studentName, grade, type });
-      return res.status(400).json({ 
-        message: "Missing required fields", 
-        received: { studentName, grade, type } 
-      });
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
     const stmt = db.prepare(`
       INSERT INTO activities 
-      (studentName, grade, subject, type, details, score, teacherId, fileData, attachmentType)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (studentName, grade, subject, type, details, score, maxPoints, dueDate, teacherId, fileData, attachmentType)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const info = stmt.run(
       studentName, 
       grade, 
-      subject || "General", // Default subject if missing
+      subject || "General", 
       type, 
       details || "",
-      score || null, 
+      score || null,
+      maxPoints || null,
+      dueDate || null, 
       req.user.uid, 
       fileBuffer, 
       mimeType
@@ -125,41 +114,44 @@ app.post('/api/activities', verifyToken, upload.single('file'), async (req, res)
   }
 });
 
-// ------------------ Acknowledge Activity (Parent) ------------------
-app.put('/api/activities/:id/acknowledge', verifyToken, (req, res) => {
+// 3. POST: Bulk Activities (For Roll Call)
+app.post('/api/activities/bulk', verifyToken, (req, res) => {
   try {
-    const stmt = db.prepare('UPDATE activities SET isAcknowledged = 1 WHERE id = ?');
-    const info = stmt.run(req.params.id);
+    const activities = req.body; // Expecting array of objects
+    if (!Array.isArray(activities) || activities.length === 0) {
+      return res.status(400).json({ message: "Invalid data for bulk upload" });
+    }
 
-    if (info.changes === 0) return res.status(404).json({ message: "Activity not found" });
+    // Transaction for performance and safety
+    const insertMany = db.transaction((items) => {
+      const stmt = db.prepare(`
+        INSERT INTO activities (studentName, grade, subject, type, details, teacherId)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of items) {
+        stmt.run(item.studentName, item.grade, "General", "Attendance", item.details, req.user.uid);
+      }
+    });
 
-    res.json({ success: true, message: "Activity acknowledged" });
+    insertMany(activities);
+    res.json({ success: true, message: `Logged ${activities.length} records.` });
+
   } catch (err) {
+    console.error("BULK ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ------------------ Sign Permission Slip (Parent) ------------------
-app.put('/api/activities/:id/sign', verifyToken, (req, res) => {
-  const { signature } = req.body; // Expecting Base64 string
-
-  if (!signature) {
-    return res.status(400).json({ message: "Signature data missing" });
-  }
-
+// 4. DELETE: Remove Activity
+app.delete('/api/activities/:id', verifyToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
-      UPDATE activities 
-      SET parentSignature = ?, isAcknowledged = 1 
-      WHERE id = ?
-    `);
-    const info = stmt.run(signature, req.params.id);
+    const stmt = db.prepare('DELETE FROM activities WHERE id = ?');
+    const info = stmt.run(req.params.id);
 
     if (info.changes === 0) return res.status(404).json({ message: "Activity not found" });
 
-    res.json({ success: true, message: "Permission slip signed successfully" });
+    res.json({ success: true, message: "Deleted successfully" });
   } catch (err) {
-    console.error("SIGN ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
